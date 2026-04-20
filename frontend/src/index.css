@@ -1,0 +1,132 @@
+@import "tailwindcss";
+
+/* Dark mode via .dark class on <html> */
+@variant dark (&:where(.dark, .dark *));
+
+@theme {
+  /* ── Strategio brand purple (replaces indigo scale) ── */
+  --color-indigo-50:  #f3effe;
+  --color-indigo-100: #e8dffd;
+  --color-indigo-200: #d0bffb;
+  --color-indigo-300: #b899f8;
+  --color-indigo-400: #9068f4;
+  --color-indigo-500: #6b36e8;
+  --color-indigo-600: #4D0FC1;
+  --color-indigo-700: #3d0b99;
+  --color-indigo-800: #2d0873;
+  --color-indigo-900: #1e0550;
+
+  /* ── Strategio orange accent ── */
+  --color-amber-400: #FF985C;
+  --color-amber-500: #FF985C;
+  --color-amber-600: #e07a3e;
+
+  /* ── Custom surface colors ── */
+  --color-surface-50:  #F8F5FF;
+  --color-surface-100: #F0EAFE;
+}
+
+/* ── Typography ── */
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Smooth dark mode transitions ── */
+*, *::before, *::after {
+  transition-property: background-color, border-color, color, box-shadow;
+  transition-duration: 150ms;
+  transition-timing-function: ease;
+}
+svg, svg * { transition: none; }
+
+/* ────────────────────────────────────────────
+   DARK MODE — global overrides for all pages
+   Apply dark styles to Tailwind utility classes
+   ──────────────────────────────────────────── */
+.dark {
+  color-scheme: dark;
+}
+
+/* Page backgrounds */
+.dark .bg-gray-50  { background-color: #0A0A19 !important; }
+.dark .bg-gray-100 { background-color: rgba(255,255,255,0.06) !important; }
+
+/* Cards & surfaces */
+.dark .bg-white { background-color: #1E1B26 !important; }
+
+/* Text */
+.dark .text-gray-900 { color: rgba(255,255,255,0.95) !important; }
+.dark .text-gray-800 { color: rgba(255,255,255,0.85) !important; }
+.dark .text-gray-700 { color: rgba(255,255,255,0.70) !important; }
+.dark .text-gray-600 { color: rgba(255,255,255,0.55) !important; }
+.dark .text-gray-500 { color: rgba(255,255,255,0.45) !important; }
+.dark .text-gray-400 { color: rgba(255,255,255,0.35) !important; }
+
+/* Borders */
+.dark .border-gray-200 { border-color: rgba(255,255,255,0.09) !important; }
+.dark .border-gray-100 { border-color: rgba(255,255,255,0.05) !important; }
+.dark .border-gray-300 { border-color: rgba(255,255,255,0.14) !important; }
+
+/* Inputs */
+.dark input,
+.dark select,
+.dark textarea {
+  background-color: rgba(255,255,255,0.06) !important;
+  border-color: rgba(255,255,255,0.12) !important;
+  color: rgba(255,255,255,0.9) !important;
+}
+.dark input::placeholder,
+.dark textarea::placeholder { color: rgba(255,255,255,0.25) !important; }
+.dark input:focus,
+.dark select:focus,
+.dark textarea:focus {
+  border-color: #4D0FC1 !important;
+  box-shadow: 0 0 0 2px rgba(77,15,193,0.35) !important;
+}
+.dark select option { background-color: #1E1B26; }
+
+/* Hover states on interactive elements */
+.dark .hover\:bg-gray-50:hover  { background-color: rgba(255,255,255,0.04) !important; }
+.dark .hover\:bg-gray-100:hover { background-color: rgba(255,255,255,0.06) !important; }
+.dark .hover\:border-indigo-300:hover { border-color: rgba(77,15,193,0.5) !important; }
+
+/* Pill badges — keep them readable */
+.dark .bg-indigo-50  { background-color: rgba(77,15,193,0.2) !important; }
+.dark .bg-indigo-100 { background-color: rgba(77,15,193,0.25) !important; }
+.dark .text-indigo-700 { color: #b899f8 !important; }
+.dark .text-indigo-600 { color: #9068f4 !important; }
+.dark .text-indigo-400 { color: #b899f8 !important; }
+
+.dark .bg-green-50   { background-color: rgba(16,185,129,0.15) !important; }
+.dark .bg-green-100  { background-color: rgba(16,185,129,0.2) !important; }
+.dark .text-green-700 { color: #34d399 !important; }
+.dark .text-green-500 { color: #34d399 !important; }
+
+.dark .bg-red-50     { background-color: rgba(239,68,68,0.15) !important; }
+.dark .bg-red-100    { background-color: rgba(239,68,68,0.2) !important; }
+.dark .text-red-600  { color: #f87171 !important; }
+
+.dark .bg-amber-50   { background-color: rgba(255,152,92,0.15) !important; }
+.dark .bg-amber-100  { background-color: rgba(255,152,92,0.2) !important; }
+.dark .text-amber-700 { color: #FF985C !important; }
+.dark .text-amber-500 { color: #FF985C !important; }
+.dark .text-amber-600 { color: #FF985C !important; }
+
+.dark .bg-sky-100    { background-color: rgba(14,165,233,0.2) !important; }
+.dark .text-sky-700  { color: #38bdf8 !important; }
+
+.dark .bg-violet-100 { background-color: rgba(139,92,246,0.2) !important; }
+.dark .text-violet-700 { color: #c4b5fd !important; }
+
+.dark .bg-emerald-100 { background-color: rgba(16,185,129,0.2) !important; }
+.dark .text-emerald-700 { color: #34d399 !important; }
+
+.dark .bg-purple-600 { background-color: #4D0FC1 !important; }
+.dark .hover\:bg-purple-700:hover { background-color: #3d0b99 !important; }
+
+/* Modals / overlays */
+.dark .bg-black\/50 { background-color: rgba(0,0,0,0.7) !important; }
+
+/* Dividers */
+.dark .divide-gray-200 > * + * { border-color: rgba(255,255,255,0.08) !important; }
