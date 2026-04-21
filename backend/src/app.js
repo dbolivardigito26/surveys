@@ -4,15 +4,14 @@ const cors = require('cors');
 function createApp() {
   const app = express();
 
-  const allowedOrigins = [
-    'http://localhost:5173',
-    'http://localhost:4173',
-    ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : []),
-  ];
+  const extraOrigins = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : [];
 
   app.use(cors({
     origin: (origin, cb) => {
-      if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+      if (!origin) return cb(null, true);                                          // curl / mobile
+      if (/^https?:\/\/localhost(:\d+)?$/.test(origin)) return cb(null, true);    // local dev
+      if (/^https:\/\/[a-zA-Z0-9-]+\.vercel\.app$/.test(origin)) return cb(null, true); // vercel.app (prod + preview)
+      if (extraOrigins.includes(origin)) return cb(null, true);                   // dominios custom
       cb(new Error(`CORS bloqueado para: ${origin}`));
     },
     credentials: true,
