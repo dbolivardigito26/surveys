@@ -7,7 +7,7 @@
     "api/index.js": {
       "memory": 512,
       "maxDuration": 30,
-      "includeFiles": "backend/src/**,node_modules/sql.js/dist/sql-wasm.wasm"
+      "includeFiles": "backend/src/**,node_modules/sql.js/dist/**"
     }
   },
   "routes": [

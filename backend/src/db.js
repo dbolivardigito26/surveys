@@ -63,8 +63,16 @@ class DBWrapper {
 }
 
 async function initDb() {
-  // Explicitly pass the WASM binary so bundlers (esbuild/Vercel) don't lose the file reference
-  const wasmBinary = fs.readFileSync(require.resolve('sql.js/dist/sql-wasm.wasm'));
+  const wasmCandidates = [
+    path.join(process.cwd(), 'node_modules/sql.js/dist/sql-wasm.wasm'),
+    path.join(__dirname, '../../node_modules/sql.js/dist/sql-wasm.wasm'),
+    path.join(__dirname, '../../../node_modules/sql.js/dist/sql-wasm.wasm'),
+  ];
+  let wasmBinary;
+  for (const p of wasmCandidates) {
+    if (fs.existsSync(p)) { wasmBinary = fs.readFileSync(p); break; }
+  }
+  if (!wasmBinary) throw new Error(`sql-wasm.wasm not found. Tried: ${wasmCandidates.join(', ')}`);
   const SQL = await initSqlJs({ wasmBinary });
   let sqlDb;
 
