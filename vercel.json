@@ -1,13 +1,13 @@
 {
   "version": 2,
   "installCommand": "npm install",
-  "buildCommand": "cd frontend && npm install && npm run build",
+  "buildCommand": "cd frontend && npm install --include=dev && npm run build",
   "outputDirectory": "frontend/dist",
   "functions": {
     "api/index.js": {
       "memory": 512,
       "maxDuration": 30,
-      "includeFiles": "backend/src/**,node_modules/sql.js/dist/**"
+      "includeFiles": "backend/src/**"
     }
   },
   "routes": [

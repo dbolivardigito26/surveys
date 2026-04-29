@@ -7,11 +7,11 @@
     "install:backend": "cd backend && npm install"
   },
   "dependencies": {
+    "@libsql/client": "^0.14.0",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "express": "^4.18.2",
     "jsonwebtoken": "^9.0.2",
-    "sql.js": "^1.14.1",
     "uuid": "^9.0.0"
   },
   "engines": {
