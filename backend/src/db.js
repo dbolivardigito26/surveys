@@ -1,113 +1,69 @@
-const initSqlJs = require('sql.js');
-const path = require('path');
-const fs = require('fs');
+const { createClient } = require('@libsql/client');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 
-// Vercel serverless has no writable FS except /tmp; local dev falls back to the database dir
-const DB_PATH = process.env.DB_PATH ||
-  (process.env.VERCEL ? '/tmp/surveys.db' : path.join(__dirname, '../../database/surveys.db'));
+const TURSO_URL = process.env.TURSO_URL;
+const TURSO_AUTH_TOKEN = process.env.TURSO_AUTH_TOKEN;
 
 let _db = null;
 
-// Wrapper to mimic better-sqlite3 synchronous API
+function toObj(row, columns) {
+  if (!row) return undefined;
+  const obj = {};
+  for (const col of columns) obj[col] = row[col];
+  return obj;
+}
+
 class DBWrapper {
-  constructor(sqlDb) {
-    this._db = sqlDb;
-    this._dirty = false;
+  constructor(client) {
+    this._client = client;
   }
 
-  pragma(stmt) {
-    this._db.run(`PRAGMA ${stmt}`);
-  }
-
-  exec(sql) {
-    this._db.run(sql);
-    this._persist();
+  async exec(sql) {
+    await this._client.execute(sql);
   }
 
   prepare(sql) {
-    const self = this;
+    const client = this._client;
     return {
-      run(...params) {
-        const stmt = self._db.prepare(sql);
-        stmt.run(params);
-        stmt.free();
-        self._persist();
+      async run(...args) {
+        await client.execute({ sql, args });
       },
-      get(...params) {
-        const stmt = self._db.prepare(sql);
-        stmt.bind(params);
-        let result;
-        if (stmt.step()) result = stmt.getAsObject();
-        stmt.free();
-        return result;
+      async get(...args) {
+        const { rows, columns } = await client.execute({ sql, args });
+        return rows.length ? toObj(rows[0], columns) : undefined;
       },
-      all(...params) {
-        const results = [];
-        const stmt = self._db.prepare(sql);
-        stmt.bind(params);
-        while (stmt.step()) results.push(stmt.getAsObject());
-        stmt.free();
-        return results;
+      async all(...args) {
+        const { rows, columns } = await client.execute({ sql, args });
+        return rows.map(row => toObj(row, columns));
       }
     };
-  }
-
-  _persist() {
-    const data = this._db.export();
-    const dir = path.dirname(DB_PATH);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(DB_PATH, Buffer.from(data));
   }
 }
 
 async function initDb() {
-  const wasmCandidates = [
-    path.join(process.cwd(), 'node_modules/sql.js/dist/sql-wasm.wasm'),
-    path.join(__dirname, '../../node_modules/sql.js/dist/sql-wasm.wasm'),
-    path.join(__dirname, '../../../node_modules/sql.js/dist/sql-wasm.wasm'),
-  ];
-  let wasmBinary;
-  for (const p of wasmCandidates) {
-    if (fs.existsSync(p)) { wasmBinary = fs.readFileSync(p); break; }
-  }
-  if (!wasmBinary) throw new Error(`sql-wasm.wasm not found. Tried: ${wasmCandidates.join(', ')}`);
-  const SQL = await initSqlJs({ wasmBinary });
-  let sqlDb;
+  const client = createClient({ url: TURSO_URL, authToken: TURSO_AUTH_TOKEN });
 
-  if (fs.existsSync(DB_PATH)) {
-    const fileBuffer = fs.readFileSync(DB_PATH);
-    sqlDb = new SQL.Database(fileBuffer);
-  } else {
-    sqlDb = new SQL.Database();
-  }
+  await client.execute('PRAGMA foreign_keys = ON');
 
-  const db = new DBWrapper(sqlDb);
-
-  db._db.run(`PRAGMA journal_mode = WAL`);
-  db._db.run(`PRAGMA foreign_keys = ON`);
-
-  db._db.run(`
-    CREATE TABLE IF NOT EXISTS users (
+  await client.batch([
+    `CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
       name TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'admin',
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS surveys (
+    )`,
+    `CREATE TABLE IF NOT EXISTS surveys (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
       description TEXT,
       anonymous INTEGER NOT NULL DEFAULT 1,
       created_by TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS questions (
+    )`,
+    `CREATE TABLE IF NOT EXISTS questions (
       id TEXT PRIMARY KEY,
       survey_id TEXT NOT NULL,
       type TEXT NOT NULL,
@@ -115,9 +71,8 @@ async function initDb() {
       options TEXT,
       required INTEGER NOT NULL DEFAULT 1,
       order_index INTEGER NOT NULL DEFAULT 0
-    );
-
-    CREATE TABLE IF NOT EXISTS waves (
+    )`,
+    `CREATE TABLE IF NOT EXISTS waves (
       id TEXT PRIMARY KEY,
       survey_id TEXT NOT NULL,
       name TEXT NOT NULL,
@@ -126,25 +81,22 @@ async function initDb() {
       closes_at TEXT,
       status TEXT NOT NULL DEFAULT 'draft',
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS responses (
+    )`,
+    `CREATE TABLE IF NOT EXISTS responses (
       id TEXT PRIMARY KEY,
       wave_id TEXT NOT NULL,
       respondent_email TEXT,
       respondent_name TEXT,
       started_at TEXT NOT NULL DEFAULT (datetime('now')),
       completed_at TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS answers (
+    )`,
+    `CREATE TABLE IF NOT EXISTS answers (
       id TEXT PRIMARY KEY,
       response_id TEXT NOT NULL,
       question_id TEXT NOT NULL,
       value TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS wave_participants (
+    )`,
+    `CREATE TABLE IF NOT EXISTS wave_participants (
       id TEXT PRIMARY KEY,
       wave_id TEXT NOT NULL,
       email TEXT NOT NULL,
@@ -153,10 +105,9 @@ async function initDb() {
       token TEXT UNIQUE NOT NULL,
       invited_at TEXT NOT NULL DEFAULT (datetime('now')),
       response_id TEXT
-    );
-  `);
+    )`,
+  ], 'write');
 
-  // Migrations: add columns if not exist
   const migrations = [
     { table: 'users', column: 'position', def: 'TEXT' },
     { table: 'users', column: 'area', def: 'TEXT' },
@@ -166,21 +117,20 @@ async function initDb() {
   ];
   for (const m of migrations) {
     try {
-      const cols = db._db.exec(`PRAGMA table_info(${m.table})`);
-      const existing = cols[0]?.values?.map((r) => r[1]) || [];
+      const { rows } = await client.execute(`PRAGMA table_info(${m.table})`);
+      const existing = rows.map(r => r['name']);
       if (!existing.includes(m.column)) {
-        db._db.run(`ALTER TABLE ${m.table} ADD COLUMN ${m.column} ${m.def}`);
+        await client.execute(`ALTER TABLE ${m.table} ADD COLUMN ${m.column} ${m.def}`);
       }
     } catch {}
   }
 
-  db._persist();
+  const db = new DBWrapper(client);
 
-  // Seed default admin if no users exist
-  const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get();
-  if (userCount && parseInt(userCount.count) === 0) {
+  const userCount = await db.prepare('SELECT COUNT(*) as count FROM users').get();
+  if (parseInt(userCount?.count || 0) === 0) {
     const hash = bcrypt.hashSync('admin123', 10);
-    db.prepare('INSERT INTO users (id, email, password_hash, name, role) VALUES (?, ?, ?, ?, ?)')
+    await db.prepare('INSERT INTO users (id, email, password_hash, name, role) VALUES (?, ?, ?, ?, ?)')
       .run(uuidv4(), 'admin@surveys.local', hash, 'Administrador', 'admin');
     console.log('Usuario admin creado: admin@surveys.local / admin123');
   }

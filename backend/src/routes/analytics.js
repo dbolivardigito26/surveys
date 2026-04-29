@@ -49,40 +49,44 @@ function computeStats(values, qType, totalResponses) {
   return stats;
 }
 
-function getWaveStats(waveId, positionFilter = null) {
+async function getWaveStats(waveId, positionFilter = null) {
   const db = getDb();
-  const wave = db.prepare('SELECT * FROM waves WHERE id = ?').get(waveId);
+  const wave = await db.prepare('SELECT * FROM waves WHERE id = ?').get(waveId);
   if (!wave) return null;
 
-  const survey = db.prepare('SELECT * FROM surveys WHERE id = ?').get(wave.survey_id);
-  const questions = db.prepare('SELECT * FROM questions WHERE survey_id = ? ORDER BY order_index').all(wave.survey_id);
+  const survey = await db.prepare('SELECT * FROM surveys WHERE id = ?').get(wave.survey_id);
+  const questions = await db.prepare('SELECT * FROM questions WHERE survey_id = ? ORDER BY order_index').all(wave.survey_id);
   questions.forEach(q => { if (q.options) q.options = JSON.parse(q.options); });
 
-  // Base query with optional position filter via participant join
   const positionClause = positionFilter
     ? `AND EXISTS (SELECT 1 FROM wave_participants p WHERE p.response_id = r.id AND p.position = '${positionFilter.replace(/'/g, "''")}')`
     : '';
 
-  const totalResponses = parseInt(db.prepare(`
+  const totalResponsesRow = await db.prepare(`
     SELECT COUNT(*) as count FROM responses r
     WHERE r.wave_id = ? AND r.completed_at IS NOT NULL ${positionClause}
-  `).get(waveId).count || 0);
+  `).get(waveId);
+  const totalResponses = parseInt(totalResponsesRow?.count || 0);
 
-  const totalParticipants = positionFilter
-    ? parseInt(db.prepare(`SELECT COUNT(*) as count FROM wave_participants WHERE wave_id = ? AND position = ?`).get(waveId, positionFilter).count || 0)
-    : parseInt(db.prepare(`SELECT COUNT(*) as count FROM wave_participants WHERE wave_id = ?`).get(waveId).count || 0);
+  let totalParticipants;
+  if (positionFilter) {
+    const row = await db.prepare(`SELECT COUNT(*) as count FROM wave_participants WHERE wave_id = ? AND position = ?`).get(waveId, positionFilter);
+    totalParticipants = parseInt(row?.count || 0);
+  } else {
+    const row = await db.prepare(`SELECT COUNT(*) as count FROM wave_participants WHERE wave_id = ?`).get(waveId);
+    totalParticipants = parseInt(row?.count || 0);
+  }
 
   const participationRate = totalParticipants > 0 ? Math.round((totalResponses / totalParticipants) * 100) : null;
 
-  // Available positions for this wave
-  const availablePositions = db.prepare(`
+  const availablePositions = (await db.prepare(`
     SELECT DISTINCT position FROM wave_participants
     WHERE wave_id = ? AND position IS NOT NULL AND position != ''
     ORDER BY position ASC
-  `).all(waveId).map(r => r.position);
+  `).all(waveId)).map(r => r.position);
 
-  const questionStats = questions.map(q => {
-    const answers = db.prepare(`
+  const questionStats = await Promise.all(questions.map(async q => {
+    const answers = await db.prepare(`
       SELECT a.value FROM answers a
       JOIN responses r ON r.id = a.response_id
       WHERE a.question_id = ? AND r.wave_id = ? AND r.completed_at IS NOT NULL ${positionClause}
@@ -94,30 +98,27 @@ function getWaveStats(waveId, positionFilter = null) {
 
     const stats = computeStats(values, q.type, totalResponses);
     return { question: q, stats, answered: values.length, skipped: totalResponses - values.length };
-  });
+  }));
 
   return { wave, survey, totalResponses, totalParticipants, participationRate, availablePositions, questionStats };
 }
 
-// Single wave analytics (supports ?position= filter)
-router.get('/wave/:waveId', authMiddleware, (req, res) => {
+router.get('/wave/:waveId', authMiddleware, async (req, res) => {
   const position = req.query.position || null;
-  const stats = getWaveStats(req.params.waveId, position);
+  const stats = await getWaveStats(req.params.waveId, position);
   if (!stats) return res.status(404).json({ error: 'Oleada no encontrada' });
   res.json(stats);
 });
 
-// Compare waves (supports position filter, returns newest first)
-router.post('/compare', authMiddleware, (req, res) => {
+router.post('/compare', authMiddleware, async (req, res) => {
   const { wave_ids, position } = req.body;
   if (!wave_ids || !Array.isArray(wave_ids) || wave_ids.length < 2) {
     return res.status(400).json({ error: 'Se necesitan al menos 2 oleadas para comparar' });
   }
 
-  const results = wave_ids.map(id => getWaveStats(id, position || null)).filter(Boolean);
+  const results = (await Promise.all(wave_ids.map(id => getWaveStats(id, position || null)))).filter(Boolean);
   if (results.length === 0) return res.status(404).json({ error: 'No se encontraron oleadas' });
 
-  // Sort newest first
   results.sort((a, b) => new Date(b.wave.created_at).getTime() - new Date(a.wave.created_at).getTime());
 
   const questions = results[0].questionStats.map(qs => qs.question);
@@ -129,7 +130,6 @@ router.post('/compare', authMiddleware, (req, res) => {
     return { question: q, waveData };
   });
 
-  // Collect all available positions across all waves
   const allPositions = [...new Set(results.flatMap(r => r.availablePositions))].sort();
 
   res.json({
@@ -144,45 +144,39 @@ router.post('/compare', authMiddleware, (req, res) => {
   });
 });
 
-// ─── Continuous measurement analytics ────────────────────────────────────────
-// GET /analytics/continuous/:surveyId?groupBy=day|week|month&from=YYYY-MM-DD&to=YYYY-MM-DD&position=
-router.get('/continuous/:surveyId', authMiddleware, (req, res) => {
+router.get('/continuous/:surveyId', authMiddleware, async (req, res) => {
   const db = getDb();
   const { groupBy = 'week', from, to, position } = req.query;
 
-  const survey = db.prepare('SELECT * FROM surveys WHERE id = ?').get(req.params.surveyId);
+  const survey = await db.prepare('SELECT * FROM surveys WHERE id = ?').get(req.params.surveyId);
   if (!survey) return res.status(404).json({ error: 'Encuesta no encontrada' });
   if (survey.measurement_type !== 'continuous') return res.status(400).json({ error: 'Solo para encuestas de medición continua' });
 
-  const wave = db.prepare('SELECT * FROM waves WHERE survey_id = ? LIMIT 1').get(req.params.surveyId);
+  const wave = await db.prepare('SELECT * FROM waves WHERE survey_id = ? LIMIT 1').get(req.params.surveyId);
   if (!wave) return res.status(404).json({ error: 'Sin oleada continua' });
 
-  const questions = db.prepare('SELECT * FROM questions WHERE survey_id = ? ORDER BY order_index').all(req.params.surveyId);
+  const questions = await db.prepare('SELECT * FROM questions WHERE survey_id = ? ORDER BY order_index').all(req.params.surveyId);
   questions.forEach(q => { if (q.options) q.options = JSON.parse(q.options); });
 
-  // SQLite strftime format per groupBy
   const fmtMap = { day: '%Y-%m-%d', week: '%Y-%W', month: '%Y-%m' };
   const fmt = fmtMap[groupBy] || '%Y-%W';
 
-  // Date range filter
   const dateClause = [
     from ? `AND r.completed_at >= '${from}'` : '',
     to   ? `AND r.completed_at <= '${to} 23:59:59'` : '',
   ].join(' ');
 
   const posClause = position
-    ? `AND EXISTS (SELECT 1 FROM wave_participants p WHERE p.response_id = r.id AND p.position = '${position.replace(/'/g,"''")}')`
+    ? `AND EXISTS (SELECT 1 FROM wave_participants p WHERE p.response_id = r.id AND p.position = '${position.replace(/'/g, "''")}')`
     : '';
 
-  // All periods with at least one response
-  const periodRows = db.prepare(`
+  const periodRows = await db.prepare(`
     SELECT strftime('${fmt}', r.completed_at) as period, COUNT(*) as count
     FROM responses r
     WHERE r.wave_id = ? AND r.completed_at IS NOT NULL ${dateClause} ${posClause}
     GROUP BY period ORDER BY period ASC
   `).all(wave.id);
 
-  // Label formatter helpers
   function periodLabel(p) {
     if (groupBy === 'day') return p;
     if (groupBy === 'month') { const [y, m] = p.split('-'); const mn = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic']; return `${mn[parseInt(m)-1]} ${y}`; }
@@ -190,10 +184,9 @@ router.get('/continuous/:surveyId', authMiddleware, (req, res) => {
     return p;
   }
 
-  // Per-question trend: for each question compute stats per period
-  const questionTrends = questions.map(q => {
-    const periodStats = periodRows.map(pr => {
-      const answers = db.prepare(`
+  const questionTrends = await Promise.all(questions.map(async q => {
+    const periodStats = await Promise.all(periodRows.map(async pr => {
+      const answers = await db.prepare(`
         SELECT a.value FROM answers a
         JOIN responses r ON r.id = a.response_id
         WHERE a.question_id = ? AND r.wave_id = ?
@@ -204,19 +197,17 @@ router.get('/continuous/:surveyId', authMiddleware, (req, res) => {
       const values = answers.map(a => { try { return JSON.parse(a.value); } catch { return a.value; } });
       const stats = computeStats(values, q.type, parseInt(pr.count));
       return { period: pr.period, label: periodLabel(pr.period), responses: parseInt(pr.count), stats };
-    });
+    }));
     return { question: q, periodStats };
-  });
+  }));
 
-  // Available positions for filter
-  const availablePositions = db.prepare(`
+  const availablePositions = (await db.prepare(`
     SELECT DISTINCT position FROM wave_participants
     WHERE wave_id = ? AND position IS NOT NULL AND position != ''
     ORDER BY position ASC
-  `).all(wave.id).map(r => r.position);
+  `).all(wave.id)).map(r => r.position);
 
-  // Date range of responses (for the range picker)
-  const dateRange = db.prepare(`
+  const dateRange = await db.prepare(`
     SELECT MIN(date(completed_at)) as minDate, MAX(date(completed_at)) as maxDate
     FROM responses WHERE wave_id = ? AND completed_at IS NOT NULL
   `).get(wave.id);
@@ -232,16 +223,17 @@ router.get('/continuous/:surveyId', authMiddleware, (req, res) => {
   });
 });
 
-// Survey overview — newest first
-router.get('/survey/:surveyId', authMiddleware, (req, res) => {
+router.get('/survey/:surveyId', authMiddleware, async (req, res) => {
   const db = getDb();
-  const waves = db.prepare('SELECT * FROM waves WHERE survey_id = ? ORDER BY created_at DESC').all(req.params.surveyId);
-  const summary = waves.map(w => {
-    const totalResponses = parseInt(db.prepare('SELECT COUNT(*) as count FROM responses WHERE wave_id = ? AND completed_at IS NOT NULL').get(w.id).count || 0);
-    const totalParticipants = parseInt(db.prepare('SELECT COUNT(*) as count FROM wave_participants WHERE wave_id = ?').get(w.id).count || 0);
+  const waves = await db.prepare('SELECT * FROM waves WHERE survey_id = ? ORDER BY created_at DESC').all(req.params.surveyId);
+  const summary = await Promise.all(waves.map(async w => {
+    const totalResponsesRow = await db.prepare('SELECT COUNT(*) as count FROM responses WHERE wave_id = ? AND completed_at IS NOT NULL').get(w.id);
+    const totalParticipantsRow = await db.prepare('SELECT COUNT(*) as count FROM wave_participants WHERE wave_id = ?').get(w.id);
+    const totalResponses = parseInt(totalResponsesRow?.count || 0);
+    const totalParticipants = parseInt(totalParticipantsRow?.count || 0);
     const participationRate = totalParticipants > 0 ? Math.round((totalResponses / totalParticipants) * 100) : null;
     return { wave: w, totalResponses, totalParticipants, participationRate };
-  });
+  }));
   res.json(summary);
 });
 
